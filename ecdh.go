@@ -72,8 +72,7 @@ func Decrypt(out, data, priv, pub []byte) ([]byte, error) {
 
 	data = data[aes.BlockSize:]
 
-	start := len(out)
-	out = append(out, data...)
+	start, out := grow(out, len(data))
 	d.CryptBlocks(out[start:], data)
 
 	return out, nil
@@ -96,10 +95,9 @@ func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) 
 		return nil, fmt.Errorf("calculate key: %w", err)
 	}
 
-	pad := len(data) % aes.BlockSize
-	start := len(out)
-	out = append(out, make([]byte, aes.BlockSize+len(data)+pad)...)
-	_, err = io.ReadFull(randsource, out[start:aes.BlockSize])
+	pad := (aes.BlockSize - len(data)%aes.BlockSize) % aes.BlockSize
+	start, out := grow(out, aes.BlockSize+len(data)+pad)
+	_, err = io.ReadFull(randsource, out[start:start+aes.BlockSize])
 	if err != nil {
 		return nil, fmt.Errorf("generate IV: %w", err)
 	}
@@ -108,16 +106,22 @@ func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("create cipher: %w", err)
 	}
-	d := cipher.NewCBCEncrypter(c, out[start:aes.BlockSize])
+	d := cipher.NewCBCEncrypter(c, out[start:start+aes.BlockSize])
 
 	if subtle.ConstantTimeEq(int32(pad), 0) == 0 {
-		_, err := io.ReadFull(randsource, data[len(data)-pad:])
+		_, err := io.ReadFull(randsource, out[len(out)-pad:])
 		if err != nil {
 			return nil, fmt.Errorf("generate padding: %w", err)
 		}
 	}
 
-	d.CryptBlocks(out[start+aes.BlockSize:], data)
+	d.CryptBlocks(out[start+aes.BlockSize:], append(data, out[len(out)-pad:]...))
 
 	return out, nil
+}
+
+func grow(s []byte, n int) (int, []byte) {
+	start := len(s)
+	s = append(s, make([]byte, n)...)
+	return start, s
 }

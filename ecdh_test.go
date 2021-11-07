@@ -1,6 +1,7 @@
 package ecdh_test
 
 import (
+	"crypto/aes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,9 +17,14 @@ func TestEncrypt(t *testing.T) {
 			name: "NoPadding",
 			data: []byte("testbutnopadding"),
 		},
+		{
+			name: "Padding",
+			data: []byte("testwithpadding"),
+		},
 	}
 
 	for _, test := range tests {
+		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -39,7 +45,10 @@ func TestEncrypt(t *testing.T) {
 			dec, err := ecdh.Decrypt(nil, enc, priv2, pub1)
 			require.NoError(t, err, "It should decrypt the data.")
 
-			require.Equal(t, test.data, dec, "The decrypted data should be the same as before encryption.")
+			pad := (aes.BlockSize - len(test.data)%aes.BlockSize) % aes.BlockSize
+			require.Equal(t, len(test.data)+pad, len(dec), "The decrypted data should be the original length plus padding.")
+
+			require.Equal(t, test.data, dec[:len(test.data)], "The decrypted data should be the same as before encryption.")
 		})
 	}
 }
