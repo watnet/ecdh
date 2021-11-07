@@ -21,6 +21,10 @@ func TestEncrypt(t *testing.T) {
 			name: "Padding",
 			data: []byte("testwithpadding"),
 		},
+		{
+			name: "LongWithPadding",
+			data: []byte("this is some text that is longer than a single block and has padding"),
+		},
 	}
 
 	for _, test := range tests {
