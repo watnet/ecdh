@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -109,7 +110,7 @@ func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) 
 	}
 	d := cipher.NewCBCEncrypter(c, out[start:aes.BlockSize])
 
-	if pad != 0 {
+	if subtle.ConstantTimeEq(int32(pad), 0) == 0 {
 		_, err := io.ReadFull(randsource, data[len(data)-pad:])
 		if err != nil {
 			return nil, fmt.Errorf("generate padding: %w", err)
