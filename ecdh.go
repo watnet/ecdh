@@ -81,7 +81,15 @@ func Decrypt(out, data, priv, pub []byte) ([]byte, error) {
 // Encrypt encrypts data using an AES key generated via ECDH from the
 // provided public and private Ed25519 keys. It appends the result to
 // out and returns the resulting slice.
-func Encrypt(out, data, priv, pub []byte) ([]byte, error) {
+//
+// The provided randsource is used to generate random data for the
+// initial vector and for padding at the end of the data. If it is
+// nil, crypto/rand.Reader is used.
+func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) {
+	if randsource == nil {
+		randsource = rand.Reader
+	}
+
 	key, err := curve25519.X25519(priv, pub)
 	if err != nil {
 		return nil, fmt.Errorf("calculate key: %w", err)
@@ -90,7 +98,7 @@ func Encrypt(out, data, priv, pub []byte) ([]byte, error) {
 	pad := len(data) % aes.BlockSize
 	start := len(out)
 	out = append(out, make([]byte, aes.BlockSize+len(data)+pad)...)
-	_, err = io.ReadFull(rand.Reader, out[start:aes.BlockSize])
+	_, err = io.ReadFull(randsource, out[start:aes.BlockSize])
 	if err != nil {
 		return nil, fmt.Errorf("generate IV: %w", err)
 	}
@@ -102,7 +110,7 @@ func Encrypt(out, data, priv, pub []byte) ([]byte, error) {
 	d := cipher.NewCBCEncrypter(c, out[start:aes.BlockSize])
 
 	if pad != 0 {
-		_, err := io.ReadFull(rand.Reader, data[len(data)-pad:])
+		_, err := io.ReadFull(randsource, data[len(data)-pad:])
 		if err != nil {
 			return nil, fmt.Errorf("generate padding: %w", err)
 		}

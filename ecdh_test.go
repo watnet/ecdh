@@ -32,7 +32,7 @@ func TestEncrypt(t *testing.T) {
 			pub2, err := ecdh.GetPublic(priv2)
 			require.NoError(t, err, "It should calculate the public key.")
 
-			enc, err := ecdh.Encrypt(nil, test.data, priv1, pub2)
+			enc, err := ecdh.Encrypt(nil, test.data, priv1, pub2, nil)
 			require.NoError(t, err, "It should encrypt the data.")
 			require.NotEqual(t, test.data, enc, "The encrypted data should be different from the original.")
 
