@@ -38,6 +38,12 @@ func grow(s []byte, n int) (int, []byte) {
 	return start, s
 }
 
+// PaddingLen returns the number of bytes of padding that will be
+// generated for data of the given length when encrypting.
+func PaddingLen(data int) int {
+	return (aes.BlockSize - data%aes.BlockSize) % aes.BlockSize
+}
+
 // GenerateKey generates a new private key from the provided source of
 // random bytes. If randsource is nil, crypto/rand.Reader is used.
 func GenerateKey(randsource io.Reader) (priv []byte, err error) {
@@ -55,8 +61,8 @@ func GenerateKey(randsource io.Reader) (priv []byte, err error) {
 	return priv, nil
 }
 
-// GetPublic calculates a public key from a given private key.
-func GetPublic(priv []byte) ([]byte, error) {
+// PublicKey calculates a public key from a given private key.
+func PublicKey(priv []byte) ([]byte, error) {
 	return curve25519.X25519(priv, curve25519.Basepoint)
 }
 
@@ -104,7 +110,7 @@ func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) 
 		return nil, fmt.Errorf("calculate key: %w", err)
 	}
 
-	pad := (aes.BlockSize - len(data)%aes.BlockSize) % aes.BlockSize
+	pad := PaddingLen(len(data))
 	start, out := grow(out, aes.BlockSize+len(data)+pad)
 	_, err = io.ReadFull(randsource, out[start:start+aes.BlockSize])
 	if err != nil {

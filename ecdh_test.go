@@ -34,12 +34,12 @@ func TestEncrypt(t *testing.T) {
 
 			priv1, err := ecdh.GenerateKey(nil)
 			require.NoError(t, err, "It should generate a private key.")
-			pub1, err := ecdh.GetPublic(priv1)
+			pub1, err := ecdh.PublicKey(priv1)
 			require.NoError(t, err, "It should calculate the public key.")
 
 			priv2, err := ecdh.GenerateKey(nil)
 			require.NoError(t, err, "It should generate a private key.")
-			pub2, err := ecdh.GetPublic(priv2)
+			pub2, err := ecdh.PublicKey(priv2)
 			require.NoError(t, err, "It should calculate the public key.")
 
 			enc, err := ecdh.Encrypt(nil, test.data, priv1, pub2, nil)
