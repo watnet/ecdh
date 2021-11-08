@@ -29,6 +29,15 @@ func clamp(key []byte) {
 	key[31] |= 64
 }
 
+// grow increases the length of a byte slice by the given number of
+// bytes, returning the index of the beginning of the new bytes and
+// the modified slice.
+func grow(s []byte, n int) (int, []byte) {
+	start := len(s)
+	s = append(s, make([]byte, n)...)
+	return start, s
+}
+
 // GenerateKey generates a new private key from the provided source of
 // random bytes. If randsource is nil, crypto/rand.Reader is used.
 func GenerateKey(randsource io.Reader) (priv []byte, err error) {
@@ -118,10 +127,4 @@ func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) 
 	d.CryptBlocks(out[start+aes.BlockSize:], append(data, out[len(out)-pad:]...))
 
 	return out, nil
-}
-
-func grow(s []byte, n int) (int, []byte) {
-	start := len(s)
-	s = append(s, make([]byte, n)...)
-	return start, s
 }
