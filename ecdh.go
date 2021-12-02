@@ -1,7 +1,6 @@
 package ecdh
 
 import (
-	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
@@ -20,117 +19,170 @@ const (
 
 var (
 	ErrDataLen = errors.New("data length zero or not a multiple of the blocksize")
+	ErrOutLen  = errors.New("out length is too small")
 )
 
+type PrivateKey []byte
+
 // From https://cr.yp.to/ecdh.html.
-func clamp(key []byte) {
-	key[0] &= 248
-	key[31] &= 127
-	key[31] |= 64
+func (priv PrivateKey) clamp() {
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
 }
 
-// grow increases the length of a byte slice by the given number of
-// bytes, returning the index of the beginning of the new bytes and
-// the modified slice.
-func grow(s []byte, n int) (int, []byte) {
-	start := len(s)
-	s = append(s, make([]byte, n)...)
-	return start, s
+// PublicKey calculates a public key from a given private key.
+func (priv PrivateKey) PublicKey() (PublicKey, error) {
+	return curve25519.X25519(priv, curve25519.Basepoint)
+}
+
+type PublicKey []byte
+
+// Config handles configuration details for a variety of things.
+type Config struct {
+	// Rand is the random source to use. If it is nil,
+	// crypto/rand.Reader is used.
+	Rand io.Reader
+
+	// Mode is the encryption mode to use for the symmetric encryption
+	// step. If it is nil, AES is used.
+	Mode Mode
+}
+
+func (c Config) rand() io.Reader {
+	if c.Rand == nil {
+		return rand.Reader
+	}
+	return c.Rand
+}
+
+func (c Config) mode() Mode {
+	if c.Mode == nil {
+		return AES()
+	}
+	return c.Mode
 }
 
 // PaddingLen returns the number of bytes of padding that will be
 // generated for data of the given length when encrypting.
-func PaddingLen(data int) int {
-	return (aes.BlockSize - data%aes.BlockSize) % aes.BlockSize
+func (c Config) PaddingLen(data int) int {
+	blockSize := c.mode().blockSize()
+	return (blockSize - data%blockSize) % blockSize
+}
+
+func encryptedLen(data, blockSize, padding int) int {
+	return blockSize + data + padding
+}
+
+func decryptedLen(data, blockSize int) int {
+	return data - blockSize
+}
+
+// EncryptedLen returns the minimum number of bytes that are required
+// to store data of the given length after encryption.
+func (c Config) EncryptedLen(data int) int {
+	return encryptedLen(data, c.mode().blockSize(), c.PaddingLen(data))
+}
+
+// DecryptedLen returns the minimum number of bytes that are required
+// to store data of the given length, including padding, after
+// decryption.
+func (c Config) DecryptedLen(data int) int {
+	return decryptedLen(data, c.mode().blockSize())
 }
 
 // GenerateKey generates a new private key from the provided source of
-// random bytes. If randsource is nil, crypto/rand.Reader is used.
-func GenerateKey(randsource io.Reader) (priv []byte, err error) {
-	if randsource == nil {
-		randsource = rand.Reader
-	}
+// random bytes.
+func (c Config) GenerateKey() (priv PrivateKey, err error) {
+	randsource := c.rand()
 
-	priv = make([]byte, KeyLen)
+	priv = make(PrivateKey, KeyLen)
 	_, err = io.ReadFull(randsource, priv)
 	if err != nil {
 		return nil, fmt.Errorf("generate private key: %w", err)
 	}
-	clamp(priv)
+	priv.clamp()
 
 	return priv, nil
 }
 
-// PublicKey calculates a public key from a given private key.
-func PublicKey(priv []byte) ([]byte, error) {
-	return curve25519.X25519(priv, curve25519.Basepoint)
-}
-
-// Decrypt decrypts data using an AES key generated via ECDH from the
-// provided public and private Ed25519 keys. It appends the result to
-// out and returns the resulting slice.
-func Decrypt(out, data, priv, pub []byte) ([]byte, error) {
-	if len(data) == 0 || len(data)%aes.BlockSize != 0 {
-		return nil, ErrDataLen
-	}
-
-	key, err := curve25519.X25519(priv, pub)
-	if err != nil {
-		return nil, fmt.Errorf("calculate key: %w", err)
-	}
-
-	c, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("create cipher: %w", err)
-	}
-	d := cipher.NewCBCDecrypter(c, data[:aes.BlockSize])
-
-	data = data[aes.BlockSize:]
-
-	start, out := grow(out, len(data))
-	d.CryptBlocks(out[start:], data)
-
-	return out, nil
-}
-
-// Encrypt encrypts data using an AES key generated via ECDH from the
-// provided public and private Ed25519 keys. It appends the result to
-// out and returns the resulting slice.
+// Decrypt decrypts data using a key generated via ECDH from the
+// provided public and private Ed25519 keys.
 //
-// The provided randsource is used to generate random data for the
-// initial vector and for padding at the end of the data. If it is
-// nil, crypto/rand.Reader is used.
-func Encrypt(out, data, priv, pub []byte, randsource io.Reader) ([]byte, error) {
-	if randsource == nil {
-		randsource = rand.Reader
+// If the length of data is zero or not a multiple of the symmetric
+// encryption's blocksize, ErrDataLen is returned.
+//
+// If the length of data is not at least c.DecryptedLen(len(data)),
+// ErrOutLen is returned.
+func (c Config) Decrypt(out, data []byte, priv PrivateKey, pub PublicKey) error {
+	mode := c.mode()
+	blockSize := mode.blockSize()
+
+	if len(data) == 0 || len(data)%blockSize != 0 {
+		return ErrDataLen
+	}
+	if len(out) < decryptedLen(len(data), blockSize) {
+		return ErrOutLen
 	}
 
 	key, err := curve25519.X25519(priv, pub)
 	if err != nil {
-		return nil, fmt.Errorf("calculate key: %w", err)
+		return fmt.Errorf("calculate key: %w", err)
 	}
 
-	pad := PaddingLen(len(data))
-	start, out := grow(out, aes.BlockSize+len(data)+pad)
-	_, err = io.ReadFull(randsource, out[start:start+aes.BlockSize])
+	cip, err := mode.cipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("generate IV: %w", err)
+		return fmt.Errorf("create cipher: %w", err)
+	}
+	d := cipher.NewCBCDecrypter(cip, data[:blockSize])
+
+	data = data[blockSize:]
+	d.CryptBlocks(out, data)
+
+	return nil
+}
+
+// Encrypt encrypts data using a key generated via ECDH from the
+// provided public and private Ed25519 keys.
+//
+// If the length of data is not at least c.EncryptedLen(len(data)),
+// ErrOutLen is returned.
+func (c Config) Encrypt(out, data []byte, priv PrivateKey, pub PublicKey) error {
+	randsource := c.rand()
+
+	mode := c.mode()
+	blockSize := mode.blockSize()
+
+	pad := c.PaddingLen(len(data))
+
+	if len(out) < encryptedLen(len(data), blockSize, pad) {
+		return ErrOutLen
 	}
 
-	c, err := aes.NewCipher(key)
+	key, err := curve25519.X25519(priv, pub)
 	if err != nil {
-		return nil, fmt.Errorf("create cipher: %w", err)
+		return fmt.Errorf("calculate key: %w", err)
 	}
-	d := cipher.NewCBCEncrypter(c, out[start:start+aes.BlockSize])
+
+	_, err = io.ReadFull(randsource, out[:blockSize])
+	if err != nil {
+		return fmt.Errorf("generate IV: %w", err)
+	}
+
+	cip, err := mode.cipher(key)
+	if err != nil {
+		return fmt.Errorf("create cipher: %w", err)
+	}
+	d := cipher.NewCBCEncrypter(cip, out[:blockSize])
 
 	if subtle.ConstantTimeEq(int32(pad), 0) == 0 {
 		_, err := io.ReadFull(randsource, out[len(out)-pad:])
 		if err != nil {
-			return nil, fmt.Errorf("generate padding: %w", err)
+			return fmt.Errorf("generate padding: %w", err)
 		}
 	}
 
-	d.CryptBlocks(out[start+aes.BlockSize:], append(data, out[len(out)-pad:]...))
+	d.CryptBlocks(out[blockSize:], append(data, out[len(out)-pad:]...))
 
-	return out, nil
+	return nil
 }
